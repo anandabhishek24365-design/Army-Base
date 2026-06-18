@@ -58,7 +58,9 @@ export default function App() {
   const fetchAuditLogs = async () => {
     if (!authToken) return;
     try {
-      const res = await fetch('/api/audit/logs');
+      const res = await fetch('/api/audit/logs', {
+        headers: { 'Authorization': `Bearer ${authToken}` }
+      });
       const data = await res.json();
       if (res.ok && data.success) {
         setAuditLogs(data.logs);
@@ -97,7 +99,10 @@ export default function App() {
       try {
         await fetch('/api/audit/log', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${authToken}`
+          },
           body: JSON.stringify({
             operator: operatorName,
             action: "User Session Terminated",
@@ -170,6 +175,7 @@ export default function App() {
             <Dashboard 
               onSearchTrigger={handleSearchTrigger} 
               setActiveTab={setActiveTab} 
+              authToken={authToken}
             />
           )}
 

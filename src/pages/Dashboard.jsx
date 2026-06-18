@@ -22,7 +22,7 @@ import {
   Cell
 } from 'recharts';
 
-export default function Dashboard({ onSearchTrigger, setActiveTab }) {
+export default function Dashboard({ onSearchTrigger, setActiveTab, authToken }) {
   const [stats, setStats] = useState({
     totalPersonnel: 3,
     activePersonnel: 2,
@@ -37,14 +37,18 @@ export default function Dashboard({ onSearchTrigger, setActiveTab }) {
   const fetchDashboardData = async () => {
     try {
       // Fetch stats
-      const statsRes = await fetch('/api/dashboard/stats');
+      const statsRes = await fetch('/api/dashboard/stats', {
+        headers: { 'Authorization': `Bearer ${authToken}` }
+      });
       const statsData = await statsRes.json();
       if (statsRes.ok && statsData.success) {
         setStats(statsData.stats);
       }
 
       // Fetch latest logs for live feed
-      const logsRes = await fetch('/api/audit/logs');
+      const logsRes = await fetch('/api/audit/logs', {
+        headers: { 'Authorization': `Bearer ${authToken}` }
+      });
       const logsData = await logsRes.json();
       if (logsRes.ok && logsData.success) {
         setRecentLogs(logsData.logs.slice(0, 4));

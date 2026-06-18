@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import { Shield, Key, Eye, EyeOff, Radio, Mail, Terminal, Send } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { auth, googleProvider } from '../firebase';
+import { signInWithPopup } from 'firebase/auth';
 
 export default function Login({ onLoginSuccess }) {
   const [username, setUsername] = useState('');
@@ -13,6 +15,7 @@ export default function Login({ onLoginSuccess }) {
   const [isOtpStep, setIsOtpStep] = useState(false);
   const [otpCode, setOtpCode] = useState('');
   const [dispatchedOtp, setDispatchedOtp] = useState(''); // To display simulated OTP to user
+  const [tempToken, setTempToken] = useState(''); // Temporary state token for stateless OTP verification
 
   const handleCredentialsSubmit = async (e) => {
     e.preventDefault();
@@ -31,6 +34,7 @@ export default function Login({ onLoginSuccess }) {
       if (response.ok && data.success) {
         setIsOtpStep(true);
         setDispatchedOtp(data.otp); // Visual feedback for simulated SMS/Email OTP code
+        setTempToken(data.tempToken);
       } else {
         setError(data.message || 'Access Denied. Invalid credentials.');
       }
@@ -50,7 +54,7 @@ export default function Login({ onLoginSuccess }) {
       const response = await fetch('/api/auth/verify-otp', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, otp: otpCode })
+        body: JSON.stringify({ username, otp: otpCode, tempToken })
       });
 
       const data = await response.json();
@@ -62,6 +66,42 @@ export default function Login({ onLoginSuccess }) {
       }
     } catch (err) {
       setError('Connection to authentication server lost.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleGoogleLogin = async () => {
+    setError('');
+    setLoading(true);
+
+    try {
+      const result = await signInWithPopup(auth, googleProvider);
+      const user = result.user;
+
+      if (!user || !user.email) {
+        throw new Error("Could not retrieve email address from your Google Account.");
+      }
+
+      const response = await fetch('/api/auth/google-login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: user.email, name: user.displayName })
+      });
+
+      const data = await response.json();
+
+      if (response.ok && data.success) {
+        setIsOtpStep(true);
+        setUsername(user.email);
+        setDispatchedOtp(data.otp);
+        setTempToken(data.tempToken);
+      } else {
+        setError(data.message || 'Access Denied. Google Authentication failed.');
+      }
+    } catch (err) {
+      console.error("Firebase Sign-In Error:", err);
+      setError(err.message || 'Google Authentication failed. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -163,6 +203,24 @@ export default function Login({ onLoginSuccess }) {
               >
                 {loading ? "AUTHENTICATING..." : "REQUEST SECURE CONNECTION"}
               </button>
+
+              <div className="relative flex items-center justify-center my-4 uppercase tracking-widest text-[9px] text-olive-drab select-none">
+                <span className="absolute left-0 w-1/4 border-t border-army-green/35"></span>
+                <span>SECURE SINGLE SIGN-ON</span>
+                <span className="absolute right-0 w-1/4 border-t border-army-green/35"></span>
+              </div>
+
+              <button
+                type="button"
+                onClick={handleGoogleLogin}
+                disabled={loading}
+                className="w-full py-2.5 border border-tactical-gold/40 hover:border-tactical-gold bg-army-dark/45 hover:bg-army-green/15 text-tactical-gold font-bold uppercase tracking-widest rounded transition-all duration-200 flex items-center justify-center gap-2 cursor-pointer shadow-[0_0_12px_rgba(212,175,55,0.05)] text-[10px]"
+              >
+                <svg className="w-3.5 h-3.5 shrink-0 fill-current" viewBox="0 0 24 24">
+                  <path d="M12.24 10.285V14.4h6.887c-.648 2.41-2.519 4.114-5.136 4.114-3.51 0-6.377-2.87-6.377-6.38 0-3.51 2.87-6.377 6.377-6.377 1.637 0 3.125.617 4.269 1.625L18.29 4.31C16.63 2.76 14.505 1.8 12.24 1.8 6.605 1.8 2 6.405 2 12.04c0 5.635 4.605 10.24 10.24 10.24 5.8 0 10.24-4.11 10.24-10.24 0-.685-.06-1.355-.18-1.996h-10.06z" />
+                </svg>
+                <span>SIGN IN WITH GOOGLE SSO</span>
+              </button>
             </motion.form>
           ) : (
             /* STEP 2: TWO-FACTOR OTP ENTRY */
@@ -177,7 +235,11 @@ export default function Login({ onLoginSuccess }) {
               <div className="text-center p-3 bg-army-dark/40 border border-army-green/30 rounded">
                 <Radio size={20} className="mx-auto text-tactical-gold animate-pulse mb-1" />
                 <p className="text-[10px] text-olive-drab uppercase font-bold">Two-Factor OTP Security Challenge</p>
-                <p className="text-[9px] text-tactical-khaki mt-1">A secure verification code was sent to your administration terminal console.</p>
+                <p className="text-[9px] text-tactical-khaki mt-1">
+                  {username && username.includes('@') 
+                    ? `A secure 6-digit cryptographic code has been dispatched to your Gmail address: ${username}`
+                    : "A secure verification code was sent to your administration terminal console."}
+                </p>
               </div>
 
               {/* Secure simulated SMS display */}
