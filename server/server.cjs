@@ -51,7 +51,7 @@ app.post('/api/auth/login', (req, res) => {
   const { username, password } = req.body;
   
   // Standard Admin credentials
-  if (username === "indianarmy_admin" && password === "SenaMedal@2026") {
+  if (username === "Abhishek2006" && password === "Abhishek@2006") {
     // Generate secure 6-digit OTP code (simulated)
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
     sessions[username] = { otp, otpExpiry: Date.now() + 5 * 60 * 1000, verified: false };
