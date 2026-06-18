@@ -1,8 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Shield, Key, Eye, EyeOff, Radio, Mail, Terminal, Send } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { auth, googleProvider } from '../firebase';
-import { signInWithPopup } from 'firebase/auth';
+import { signInWithPopup, signInWithRedirect, getRedirectResult } from 'firebase/auth';
 
 export default function Login({ onLoginSuccess }) {
   const [username, setUsername] = useState('');
@@ -16,6 +16,44 @@ export default function Login({ onLoginSuccess }) {
   const [otpCode, setOtpCode] = useState('');
   const [dispatchedOtp, setDispatchedOtp] = useState(''); // To display simulated OTP to user
   const [tempToken, setTempToken] = useState(''); // Temporary state token for stateless OTP verification
+
+  useEffect(() => {
+    const handleRedirectAuth = async () => {
+      try {
+        const result = await getRedirectResult(auth);
+        if (result && result.user) {
+          setLoading(true);
+          const user = result.user;
+          if (!user.email) {
+            throw new Error("Could not retrieve email address from your Google Account.");
+          }
+
+          const response = await fetch('/api/auth/google-login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email: user.email, name: user.displayName })
+          });
+
+          const data = await response.json();
+
+          if (response.ok && data.success) {
+            setIsOtpStep(true);
+            setUsername(user.email);
+            setDispatchedOtp(data.otp);
+            setTempToken(data.tempToken);
+          } else {
+            setError(data.message || 'Access Denied. Google Authentication failed.');
+          }
+        }
+      } catch (err) {
+        console.error("Firebase Redirect Sign-In Error:", err);
+        setError(err.message || 'Google Authentication failed. Please try again.');
+      } finally {
+        setLoading(false);
+      }
+    };
+    handleRedirectAuth();
+  }, []);
 
   const handleCredentialsSubmit = async (e) => {
     e.preventDefault();
@@ -101,7 +139,18 @@ export default function Login({ onLoginSuccess }) {
       }
     } catch (err) {
       console.error("Firebase Sign-In Error:", err);
-      setError(err.message || 'Google Authentication failed. Please try again.');
+      if (err.code === 'auth/popup-blocked' || err.message?.includes('popup') || err.message?.includes('blocked')) {
+        console.log("Popup blocked. Falling back to redirect sign-in...");
+        try {
+          await signInWithRedirect(auth, googleProvider);
+          return;
+        } catch (redirectErr) {
+          console.error("Firebase Redirect Sign-In Launch Error:", redirectErr);
+          setError(redirectErr.message || 'Google Redirect failed. Please try again.');
+        }
+      } else {
+        setError(err.message || 'Google Authentication failed. Please try again.');
+      }
     } finally {
       setLoading(false);
     }
