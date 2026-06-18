@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { Shield, Key, Eye, EyeOff, Radio, Mail, Terminal, Send } from 'lucide-react';
+import { Shield, Key, Eye, EyeOff, Radio, Mail, Terminal, Send, Loader } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { auth, googleProvider } from '../firebase';
-import { signInWithPopup, signInWithRedirect, getRedirectResult } from 'firebase/auth';
+import { signInWithRedirect, getRedirectResult } from 'firebase/auth';
 
 export default function Login({ onLoginSuccess }) {
   const [username, setUsername] = useState('');
@@ -10,6 +10,7 @@ export default function Login({ onLoginSuccess }) {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [redirectPending, setRedirectPending] = useState(true); // true while checking for redirect result
 
   // OTP flow state
   const [isOtpStep, setIsOtpStep] = useState(false);
@@ -39,7 +40,7 @@ export default function Login({ onLoginSuccess }) {
           if (response.ok && data.success) {
             setIsOtpStep(true);
             setUsername(user.email);
-            setDispatchedOtp(data.otp);
+            setDispatchedOtp(data.otp !== 'DISPATCHED' ? data.otp : '');
             setTempToken(data.tempToken);
           } else {
             setError(data.message || 'Access Denied. Google Authentication failed.');
@@ -47,9 +48,12 @@ export default function Login({ onLoginSuccess }) {
         }
       } catch (err) {
         console.error("Firebase Redirect Sign-In Error:", err);
-        setError(err.message || 'Google Authentication failed. Please try again.');
+        if (err.code !== 'auth/null-user') {
+          setError(err.message || 'Google Authentication failed. Please try again.');
+        }
       } finally {
         setLoading(false);
+        setRedirectPending(false); // Done checking; show login form
       }
     };
     handleRedirectAuth();
@@ -112,49 +116,29 @@ export default function Login({ onLoginSuccess }) {
   const handleGoogleLogin = async () => {
     setError('');
     setLoading(true);
-
     try {
-      const result = await signInWithPopup(auth, googleProvider);
-      const user = result.user;
-
-      if (!user || !user.email) {
-        throw new Error("Could not retrieve email address from your Google Account.");
-      }
-
-      const response = await fetch('/api/auth/google-login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: user.email, name: user.displayName })
-      });
-
-      const data = await response.json();
-
-      if (response.ok && data.success) {
-        setIsOtpStep(true);
-        setUsername(user.email);
-        setDispatchedOtp(data.otp);
-        setTempToken(data.tempToken);
-      } else {
-        setError(data.message || 'Access Denied. Google Authentication failed.');
-      }
+      // Use redirect directly — most reliable on Vercel/hosted environments where popups are blocked
+      await signInWithRedirect(auth, googleProvider);
+      // Page will redirect to Google — execution stops here
     } catch (err) {
       console.error("Firebase Sign-In Error:", err);
-      if (err.code === 'auth/popup-blocked' || err.message?.includes('popup') || err.message?.includes('blocked')) {
-        console.log("Popup blocked. Falling back to redirect sign-in...");
-        try {
-          await signInWithRedirect(auth, googleProvider);
-          return;
-        } catch (redirectErr) {
-          console.error("Firebase Redirect Sign-In Launch Error:", redirectErr);
-          setError(redirectErr.message || 'Google Redirect failed. Please try again.');
-        }
-      } else {
-        setError(err.message || 'Google Authentication failed. Please try again.');
-      }
-    } finally {
+      setError(err.message || 'Google Authentication failed. Please try again.');
       setLoading(false);
     }
   };
+
+  // Show full-page loading screen while we check for a Google redirect result
+  if (redirectPending) {
+    return (
+      <div className="min-h-screen bg-military-black flex flex-col items-center justify-center p-4 font-mono">
+        <div className="flex flex-col items-center gap-4 text-tactical-gold">
+          <Loader size={32} className="animate-spin" />
+          <p className="text-sm tracking-widest uppercase">Verifying Google Credentials...</p>
+          <p className="text-[10px] text-olive-drab">Please wait. Establishing secure channel.</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-military-black flex flex-col items-center justify-center p-4 relative overflow-hidden military-grid font-mono">
