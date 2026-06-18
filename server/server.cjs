@@ -218,6 +218,10 @@ app.post('/api/personnel', (req, res) => {
   }
 });
 
-app.listen(PORT, () => {
-  console.log(`Indian Army Secure Express Server running on port ${PORT}`);
-});
+if (process.env.NODE_ENV !== 'production') {
+  app.listen(PORT, () => {
+    console.log(`Indian Army Secure Express Server running on port ${PORT}`);
+  });
+}
+
+module.exports = app;
