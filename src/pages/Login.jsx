@@ -1,8 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Key, Eye, EyeOff, Radio, Mail, Terminal, Send, Loader } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { auth, googleProvider } from '../firebase';
-import { signInWithRedirect, getRedirectResult } from 'firebase/auth';
+import { signInWithPopup, signInWithRedirect, getRedirectResult } from 'firebase/auth';
 
 const SSO_REDIRECT_FLAG = 'ia-google-sso-pending';
 
@@ -23,9 +23,31 @@ export default function Login({ onLoginSuccess }) {
   const [dispatchedOtp, setDispatchedOtp] = useState('');
   const [tempToken, setTempToken] = useState('');
 
+  const redirectChecked = useRef(false);
+
+  const logClientError = async (message, err) => {
+    try {
+      await fetch('/api/debug/log', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message,
+          error: {
+            code: err.code || null,
+            message: err.message || null,
+            stack: err.stack || null
+          }
+        })
+      });
+    } catch (e) {
+      console.error('Failed to send debug log to server:', e);
+    }
+  };
+
   useEffect(() => {
     // Only run redirect result check if we came back from a Google SSO redirect
-    if (!wasRedirecting) return;
+    if (!wasRedirecting || redirectChecked.current) return;
+    redirectChecked.current = true;
 
     const handleRedirectAuth = async () => {
       try {
@@ -62,6 +84,7 @@ export default function Login({ onLoginSuccess }) {
       } catch (err) {
         console.error('Firebase Redirect Result Error:', err);
         sessionStorage.removeItem(SSO_REDIRECT_FLAG);
+        await logClientError('Firebase Redirect Result Check Failed', err);
         setError(err.message || 'Google Authentication failed. Please try again.');
       } finally {
         setLoading(false);
@@ -130,14 +153,48 @@ export default function Login({ onLoginSuccess }) {
     setError('');
     setLoading(true);
     try {
-      // Set flag so on redirect-back, we know to call getRedirectResult
-      sessionStorage.setItem(SSO_REDIRECT_FLAG, 'true');
-      await signInWithRedirect(auth, googleProvider);
-      // Browser navigates away — code below never runs
+      const result = await signInWithPopup(auth, googleProvider);
+      const user = result.user;
+
+      if (!user || !user.email) {
+        throw new Error('Could not retrieve email address from your Google Account.');
+      }
+
+      const response = await fetch('/api/auth/google-login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: user.email, name: user.displayName })
+      });
+
+      const data = await response.json();
+
+      if (response.ok && data.success) {
+        setUsername(user.email);
+        setDispatchedOtp(data.otp !== 'DISPATCHED' ? data.otp : '');
+        setTempToken(data.tempToken);
+        setIsOtpStep(true);
+      } else {
+        setError(data.message || 'Access Denied. Google Authentication failed.');
+      }
     } catch (err) {
       console.error('Firebase Sign-In Error:', err);
-      sessionStorage.removeItem(SSO_REDIRECT_FLAG);
-      setError(err.message || 'Google Authentication failed. Please try again.');
+      await logClientError('Google Sign-In Popup/Redirect Failed', err);
+      if (err.code === 'auth/popup-blocked' || err.message?.includes('popup') || err.message?.includes('blocked')) {
+        console.log('Popup blocked. Falling back to redirect sign-in...');
+        try {
+          // Set flag so on redirect-back, we know to call getRedirectResult
+          sessionStorage.setItem(SSO_REDIRECT_FLAG, 'true');
+          await signInWithRedirect(auth, googleProvider);
+          return;
+        } catch (redirectErr) {
+          console.error('Firebase Redirect Sign-In Launch Error:', redirectErr);
+          await logClientError('Firebase Redirect Sign-In Launch Error', redirectErr);
+          setError(redirectErr.message || 'Google Redirect failed. Please try again.');
+        }
+      } else {
+        setError(err.message || 'Google Authentication failed. Please try again.');
+      }
+    } finally {
       setLoading(false);
     }
   };

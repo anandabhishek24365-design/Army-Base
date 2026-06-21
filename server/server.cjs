@@ -113,6 +113,13 @@ if (!fs.existsSync(LOG_FILE_PATH)) {
   }
 }
 
+app.post('/api/debug/log', (req, res) => {
+  const { message, error } = req.body;
+  console.log(`[CLIENT DEBUG] ${message}`, error || '');
+  appendAuditLog("CLIENT_DEBUG", message, JSON.stringify(error || {}));
+  return res.status(200).json({ success: true });
+});
+
 // 1. Auth Endpoint: Standard login credentials validation
 app.post('/api/auth/login', (req, res) => {
   const { username, password } = req.body;
