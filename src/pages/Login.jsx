@@ -21,7 +21,10 @@ export default function Login({ onLoginSuccess }) {
   useEffect(() => {
     const handleRedirectAuth = async () => {
       try {
-        const result = await getRedirectResult(auth);
+        // Race between getRedirectResult and a 5s timeout — prevents infinite loading
+        const timeoutPromise = new Promise((resolve) => setTimeout(() => resolve(null), 5000));
+        const result = await Promise.race([getRedirectResult(auth), timeoutPromise]);
+
         if (result && result.user) {
           setLoading(true);
           const user = result.user;
@@ -53,7 +56,7 @@ export default function Login({ onLoginSuccess }) {
         }
       } finally {
         setLoading(false);
-        setRedirectPending(false); // Done checking; show login form
+        setRedirectPending(false); // Always clear the loading screen
       }
     };
     handleRedirectAuth();

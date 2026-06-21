@@ -3,7 +3,7 @@ import { getAuth, GoogleAuthProvider } from "firebase/auth";
 
 const firebaseConfig = {
   apiKey: "AIzaSyAJnVw6mvuKmENuatzTePqEoE3yTRKcKy4",
-  authDomain: "army-base.vercel.app",
+  authDomain: "army-base-fbce6.firebaseapp.com",
   projectId: "army-base-fbce6",
   storageBucket: "army-base-fbce6.firebasestorage.app",
   messagingSenderId: "715892715062",
