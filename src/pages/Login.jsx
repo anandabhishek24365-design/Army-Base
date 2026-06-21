@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { Shield, Key, Eye, EyeOff, Radio, Mail, Terminal, Send, Loader } from 'lucide-react';
+import { Key, Eye, EyeOff, Radio, Mail, Terminal, Send, Loader } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { auth, googleProvider } from '../firebase';
 import { signInWithRedirect, getRedirectResult } from 'firebase/auth';
+
+const SSO_REDIRECT_FLAG = 'ia-google-sso-pending';
 
 export default function Login({ onLoginSuccess }) {
   const [username, setUsername] = useState('');
@@ -10,26 +12,31 @@ export default function Login({ onLoginSuccess }) {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const [redirectPending, setRedirectPending] = useState(true); // true while checking for redirect result
+
+  // Only show redirect-pending loading screen when we KNOW a redirect was triggered
+  const wasRedirecting = sessionStorage.getItem(SSO_REDIRECT_FLAG) === 'true';
+  const [redirectPending, setRedirectPending] = useState(wasRedirecting);
 
   // OTP flow state
   const [isOtpStep, setIsOtpStep] = useState(false);
   const [otpCode, setOtpCode] = useState('');
-  const [dispatchedOtp, setDispatchedOtp] = useState(''); // To display simulated OTP to user
-  const [tempToken, setTempToken] = useState(''); // Temporary state token for stateless OTP verification
+  const [dispatchedOtp, setDispatchedOtp] = useState('');
+  const [tempToken, setTempToken] = useState('');
 
   useEffect(() => {
+    // Only run redirect result check if we came back from a Google SSO redirect
+    if (!wasRedirecting) return;
+
     const handleRedirectAuth = async () => {
       try {
-        // Race between getRedirectResult and a 5s timeout — prevents infinite loading
-        const timeoutPromise = new Promise((resolve) => setTimeout(() => resolve(null), 5000));
-        const result = await Promise.race([getRedirectResult(auth), timeoutPromise]);
+        const result = await getRedirectResult(auth);
+        sessionStorage.removeItem(SSO_REDIRECT_FLAG); // Clear flag regardless of outcome
 
         if (result && result.user) {
           setLoading(true);
           const user = result.user;
           if (!user.email) {
-            throw new Error("Could not retrieve email address from your Google Account.");
+            throw new Error('Could not retrieve email address from your Google Account.');
           }
 
           const response = await fetch('/api/auth/google-login', {
@@ -41,26 +48,29 @@ export default function Login({ onLoginSuccess }) {
           const data = await response.json();
 
           if (response.ok && data.success) {
-            setIsOtpStep(true);
             setUsername(user.email);
             setDispatchedOtp(data.otp !== 'DISPATCHED' ? data.otp : '');
             setTempToken(data.tempToken);
+            setIsOtpStep(true);
           } else {
             setError(data.message || 'Access Denied. Google Authentication failed.');
           }
+        } else {
+          // No redirect result found — Google sign-in may have been cancelled
+          setError('Google sign-in was not completed. Please try again.');
         }
       } catch (err) {
-        console.error("Firebase Redirect Sign-In Error:", err);
-        if (err.code !== 'auth/null-user') {
-          setError(err.message || 'Google Authentication failed. Please try again.');
-        }
+        console.error('Firebase Redirect Result Error:', err);
+        sessionStorage.removeItem(SSO_REDIRECT_FLAG);
+        setError(err.message || 'Google Authentication failed. Please try again.');
       } finally {
         setLoading(false);
-        setRedirectPending(false); // Always clear the loading screen
+        setRedirectPending(false);
       }
     };
+
     handleRedirectAuth();
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleCredentialsSubmit = async (e) => {
     e.preventDefault();
@@ -78,7 +88,7 @@ export default function Login({ onLoginSuccess }) {
 
       if (response.ok && data.success) {
         setIsOtpStep(true);
-        setDispatchedOtp(data.otp); // Visual feedback for simulated SMS/Email OTP code
+        setDispatchedOtp(data.otp);
         setTempToken(data.tempToken);
       } else {
         setError(data.message || 'Access Denied. Invalid credentials.');
@@ -120,17 +130,19 @@ export default function Login({ onLoginSuccess }) {
     setError('');
     setLoading(true);
     try {
-      // Use redirect directly — most reliable on Vercel/hosted environments where popups are blocked
+      // Set flag so on redirect-back, we know to call getRedirectResult
+      sessionStorage.setItem(SSO_REDIRECT_FLAG, 'true');
       await signInWithRedirect(auth, googleProvider);
-      // Page will redirect to Google — execution stops here
+      // Browser navigates away — code below never runs
     } catch (err) {
-      console.error("Firebase Sign-In Error:", err);
+      console.error('Firebase Sign-In Error:', err);
+      sessionStorage.removeItem(SSO_REDIRECT_FLAG);
       setError(err.message || 'Google Authentication failed. Please try again.');
       setLoading(false);
     }
   };
 
-  // Show full-page loading screen while we check for a Google redirect result
+  // Show full-page loading screen ONLY when coming back from Google redirect
   if (redirectPending) {
     return (
       <div className="min-h-screen bg-military-black flex flex-col items-center justify-center p-4 font-mono">
@@ -138,6 +150,15 @@ export default function Login({ onLoginSuccess }) {
           <Loader size={32} className="animate-spin" />
           <p className="text-sm tracking-widest uppercase">Verifying Google Credentials...</p>
           <p className="text-[10px] text-olive-drab">Please wait. Establishing secure channel.</p>
+          <button
+            onClick={() => {
+              sessionStorage.removeItem(SSO_REDIRECT_FLAG);
+              setRedirectPending(false);
+            }}
+            className="mt-4 text-[9px] text-olive-drab underline hover:text-tactical-gold transition-colors"
+          >
+            Cancel and return to login
+          </button>
         </div>
       </div>
     );
@@ -237,7 +258,7 @@ export default function Login({ onLoginSuccess }) {
                 disabled={loading}
                 className="w-full py-2.5 bg-tactical-gold hover:bg-amber-600 text-military-black font-bold uppercase tracking-widest rounded transition-colors shadow-lg hover:shadow-tactical-gold/20 flex items-center justify-center gap-2 cursor-pointer"
               >
-                {loading ? "AUTHENTICATING..." : "REQUEST SECURE CONNECTION"}
+                {loading ? 'AUTHENTICATING...' : 'REQUEST SECURE CONNECTION'}
               </button>
 
               <div className="relative flex items-center justify-center my-4 uppercase tracking-widest text-[9px] text-olive-drab select-none">
@@ -252,10 +273,14 @@ export default function Login({ onLoginSuccess }) {
                 disabled={loading}
                 className="w-full py-2.5 border border-tactical-gold/40 hover:border-tactical-gold bg-army-dark/45 hover:bg-army-green/15 text-tactical-gold font-bold uppercase tracking-widest rounded transition-all duration-200 flex items-center justify-center gap-2 cursor-pointer shadow-[0_0_12px_rgba(212,175,55,0.05)] text-[10px]"
               >
-                <svg className="w-3.5 h-3.5 shrink-0 fill-current" viewBox="0 0 24 24">
-                  <path d="M12.24 10.285V14.4h6.887c-.648 2.41-2.519 4.114-5.136 4.114-3.51 0-6.377-2.87-6.377-6.38 0-3.51 2.87-6.377 6.377-6.377 1.637 0 3.125.617 4.269 1.625L18.29 4.31C16.63 2.76 14.505 1.8 12.24 1.8 6.605 1.8 2 6.405 2 12.04c0 5.635 4.605 10.24 10.24 10.24 5.8 0 10.24-4.11 10.24-10.24 0-.685-.06-1.355-.18-1.996h-10.06z" />
-                </svg>
-                <span>SIGN IN WITH GOOGLE SSO</span>
+                {loading ? (
+                  <Loader size={14} className="animate-spin" />
+                ) : (
+                  <svg className="w-3.5 h-3.5 shrink-0 fill-current" viewBox="0 0 24 24">
+                    <path d="M12.24 10.285V14.4h6.887c-.648 2.41-2.519 4.114-5.136 4.114-3.51 0-6.377-2.87-6.377-6.38 0-3.51 2.87-6.377 6.377-6.377 1.637 0 3.125.617 4.269 1.625L18.29 4.31C16.63 2.76 14.505 1.8 12.24 1.8 6.605 1.8 2 6.405 2 12.04c0 5.635 4.605 10.24 10.24 10.24 5.8 0 10.24-4.11 10.24-10.24 0-.685-.06-1.355-.18-1.996h-10.06z" />
+                  </svg>
+                )}
+                <span>{loading ? 'REDIRECTING TO GOOGLE...' : 'SIGN IN WITH GOOGLE SSO'}</span>
               </button>
             </motion.form>
           ) : (
@@ -274,23 +299,30 @@ export default function Login({ onLoginSuccess }) {
                 <p className="text-[9px] text-tactical-khaki mt-1">
                   {username && username.includes('@') 
                     ? `A secure 6-digit cryptographic code has been dispatched to your Gmail address: ${username}`
-                    : "A secure verification code was sent to your administration terminal console."}
+                    : 'A secure verification code was sent to your administration terminal console.'}
                 </p>
               </div>
 
-              {/* Secure simulated SMS display */}
-              <div className="border border-tactical-orange/40 bg-tactical-orange/5 p-3 rounded font-mono text-[11px] leading-relaxed relative">
-                <div className="absolute top-[-9px] left-3 bg-military-black border border-tactical-orange/40 text-tactical-orange text-[8px] font-bold px-1.5 py-0.5 rounded tracking-widest uppercase">
-                  SIMULATED SECURE DISPATCH
+              {/* Secure simulated OTP display */}
+              {dispatchedOtp ? (
+                <div className="border border-tactical-orange/40 bg-tactical-orange/5 p-3 rounded font-mono text-[11px] leading-relaxed relative">
+                  <div className="absolute top-[-9px] left-3 bg-military-black border border-tactical-orange/40 text-tactical-orange text-[8px] font-bold px-1.5 py-0.5 rounded tracking-widest uppercase">
+                    SIMULATED SECURE DISPATCH
+                  </div>
+                  <div className="flex items-center gap-1.5 mt-1 text-tactical-orange font-bold">
+                    <Mail size={12} />
+                    <span>DISPATCH CODE FROM INDIAN ARMY HQ:</span>
+                  </div>
+                  <div className="text-white text-xs mt-1.5 select-all">
+                    Your OTP is: <strong className="text-tactical-gold text-sm tracking-wider font-bold bg-military-black/80 px-2 py-0.5 border border-tactical-gold/20 rounded">{dispatchedOtp}</strong> (Valid for 5m)
+                  </div>
                 </div>
-                <div className="flex items-center gap-1.5 mt-1 text-tactical-orange font-bold">
-                  <Mail size={12} />
-                  <span>DISPATCH CODE FROM INDIAN ARMY HQ:</span>
+              ) : (
+                <div className="border border-army-green/30 bg-army-dark/30 p-3 rounded text-[11px] text-olive-drab text-center">
+                  <Mail size={14} className="mx-auto mb-1 text-tactical-gold" />
+                  OTP has been sent to your registered email address.
                 </div>
-                <div className="text-white text-xs mt-1.5 select-all">
-                  Your OTP for Indian Army Personnel Access is: <strong className="text-tactical-gold text-sm tracking-wider font-bold bg-military-black/80 px-2 py-0.5 border border-tactical-gold/20 rounded">{dispatchedOtp}</strong> (Valid for 5m)
-                </div>
-              </div>
+              )}
 
               <div>
                 <label className="block text-[10px] text-olive-drab font-bold uppercase tracking-wider mb-1.5">ENTER 6-DIGIT SECURITY CODE</label>
@@ -311,7 +343,7 @@ export default function Login({ onLoginSuccess }) {
               <div className="flex gap-2">
                 <button 
                   type="button" 
-                  onClick={() => setIsOtpStep(false)}
+                  onClick={() => { setIsOtpStep(false); setError(''); setOtpCode(''); }}
                   className="flex-1 py-2 bg-transparent hover:bg-army-green/20 border border-army-green text-olive-drab font-bold uppercase tracking-widest rounded transition-colors text-[10px] cursor-pointer"
                 >
                   BACK TO LOGIN
@@ -322,7 +354,7 @@ export default function Login({ onLoginSuccess }) {
                   className="flex-1 py-2 bg-tactical-gold hover:bg-amber-600 text-military-black font-bold uppercase tracking-widest rounded transition-colors shadow-lg hover:shadow-tactical-gold/20 flex items-center justify-center gap-1.5 cursor-pointer text-[10px]"
                 >
                   <Send size={12} />
-                  <span>{loading ? "VERIFYING..." : "VERIFY SECURITY"}</span>
+                  <span>{loading ? 'VERIFYING...' : 'VERIFY SECURITY'}</span>
                 </button>
               </div>
             </motion.form>
