@@ -7,6 +7,7 @@ const crypto = require('crypto');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
+const isVercel = process.env.VERCEL === '1';
 
 // JWT Cryptographic Signatures for Stateless Serverless Sessions
 const SECRET_KEY = process.env.JWT_SECRET || 'indian_army_portal_secure_secret_key_2026';
@@ -81,8 +82,20 @@ let mockAuditLogs = [
 
 const LOG_FILE_PATH = path.join(__dirname, 'audit.log');
 
-// Seed personnel data (aligned with db.json)
-const mockDatabase = require('./db.json');
+// Seed personnel data (aligned with db.json) with robust fallback
+let mockDatabase;
+try {
+  mockDatabase = require('./db.json');
+} catch (e) {
+  console.warn("Failed to require db.json directly, trying fs.readFileSync...", e.message);
+  try {
+    const filePath = path.join(__dirname, 'db.json');
+    mockDatabase = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+  } catch (fsErr) {
+    console.error("Critical: Failed to read db.json from filesystem:", fsErr.message);
+    mockDatabase = {};
+  }
+}
 
 // Secure helper to write logs to file
 function appendAuditLog(operator, action, details) {
@@ -95,6 +108,11 @@ function appendAuditLog(operator, action, details) {
   
   mockAuditLogs.unshift(logEntry); // Add to memory list
   
+  if (isVercel) {
+    console.log(`[AUDIT LOG] ${JSON.stringify(logEntry)}`);
+    return;
+  }
+  
   const fileLine = `[${logEntry.timestamp}] OPERATOR: ${logEntry.operator} | ACTION: ${logEntry.action} | DETAILS: ${logEntry.details}\n`;
   
   fs.appendFile(LOG_FILE_PATH, fileLine, (err) => {
@@ -105,7 +123,7 @@ function appendAuditLog(operator, action, details) {
 }
 
 // Ensure audit.log exists (will fail gracefully in Vercel if missing, but it is tracked in git)
-if (!fs.existsSync(LOG_FILE_PATH)) {
+if (!isVercel && !fs.existsSync(LOG_FILE_PATH)) {
   try {
     fs.writeFileSync(LOG_FILE_PATH, "--- INDIAN ARMY PORTAL SECURE AUDIT LOG INITIALIZED ---\n");
   } catch (err) {
@@ -381,6 +399,11 @@ app.post('/api/personnel', (req, res) => {
       addedArmyNumbers.push(record.personalInfo.armyNumber);
     });
 
+    if (isVercel) {
+      appendAuditLog(verifiedUser, "Personnel Commissioned (Batch)", `Commissioned ${payload.length} cadets: ${addedArmyNumbers.join(', ')}`);
+      return res.status(200).json({ success: true, message: `Successfully commissioned batch of ${payload.length} cadets.` });
+    }
+
     const DB_FILE_PATH = path.join(__dirname, 'db.json');
     fs.writeFile(DB_FILE_PATH, JSON.stringify(mockDatabase, null, 2), (err) => {
       if (err) {
@@ -406,6 +429,11 @@ app.post('/api/personnel', (req, res) => {
     }
 
     mockDatabase[armyNumber] = newRecord;
+
+    if (isVercel) {
+      appendAuditLog(verifiedUser, "Personnel Commissioned", `Commissioned Cadet: ${newRecord.personalInfo.fullName} (Army No: ${armyNumber})`);
+      return res.status(200).json({ success: true, message: `Cadet ${armyNumber} commissioned successfully.` });
+    }
 
     const DB_FILE_PATH = path.join(__dirname, 'db.json');
     fs.writeFile(DB_FILE_PATH, JSON.stringify(mockDatabase, null, 2), (err) => {
